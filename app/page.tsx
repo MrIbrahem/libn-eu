@@ -7,18 +7,20 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Copy, Facebook, Instagram, MessageCircle, Calculator, History, Info } from "lucide-react"
+import {
+  Copy,
+  Facebook,
+  Instagram,
+  MessageCircle,
+  Calculator,
+  History,
+  Info,
+  Database,
+  Download,
+  Trash2,
+} from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
-
-interface CalculationResult {
-  id: string
-  timestamp: Date
-  side1: number
-  side2: number
-  hypotenuse: number
-  areaM2: number
-  areaLabnah: number
-}
+import { dbManager, type CalculationRecord } from "@/lib/database"
 
 export default function TriangleCalculator() {
   const [activeTab, setActiveTab] = useState("home")
@@ -30,46 +32,51 @@ export default function TriangleCalculator() {
   const [currentAreaLabnah, setCurrentAreaLabnah] = useState(0)
   const [totalAreaM2, setTotalAreaM2] = useState(0)
   const [totalAreaLabnah, setTotalAreaLabnah] = useState(0)
-  const [history, setHistory] = useState<CalculationResult[]>([])
+  const [history, setHistory] = useState<CalculationRecord[]>([])
   const [error, setError] = useState("")
+  const [statistics, setStatistics] = useState({
+    totalCalculations: 0,
+    totalSessions: 0,
+    averageAreaM2: 0,
+    averageAreaLabnah: 0,
+    lastCalculation: null as Date | null,
+  })
   const { toast } = useToast()
 
-  // Load data from localStorage on component mount
+  // Load data from database on component mount
   useEffect(() => {
-    const savedHistory = localStorage.getItem("triangleHistory")
-    const savedTotal = localStorage.getItem("triangleTotal")
-
-    if (savedHistory) {
-      const parsedHistory = JSON.parse(savedHistory)
-      setHistory(
-        parsedHistory.map((item: any) => ({
-          ...item,
-          timestamp: new Date(item.timestamp),
-        })),
-      )
-    }
-
-    if (savedTotal) {
-      const { totalM2, totalLabnah } = JSON.parse(savedTotal)
-      setTotalAreaM2(totalM2)
-      setTotalAreaLabnah(totalLabnah)
-    }
+    loadDataFromDatabase()
   }, [])
 
-  // Save to localStorage whenever history or totals change
-  useEffect(() => {
-    localStorage.setItem("triangleHistory", JSON.stringify(history))
-  }, [history])
+  const loadDataFromDatabase = async () => {
+    try {
+      // Load calculations history
+      const calculations = await dbManager.getCalculations()
+      setHistory(calculations)
 
-  useEffect(() => {
-    localStorage.setItem(
-      "triangleTotal",
-      JSON.stringify({
-        totalM2: totalAreaM2,
-        totalLabnah: totalAreaLabnah,
-      }),
-    )
-  }, [totalAreaM2, totalAreaLabnah])
+      // Load totals
+      const totals = await dbManager.getTotals()
+      if (totals) {
+        setTotalAreaM2(totals.total_area_m2)
+        setTotalAreaLabnah(totals.total_area_labnah)
+      }
+
+      // Load session logs
+      const logs = await dbManager.getSessionLogs()
+      setCalculationLog(logs)
+
+      // Load statistics
+      const stats = await dbManager.getStatistics()
+      setStatistics(stats)
+    } catch (error) {
+      console.error("Failed to load data from database:", error)
+      toast({
+        title: "خطأ في قاعدة البيانات",
+        description: "فشل في تحميل البيانات من قاعدة البيانات",
+        variant: "destructive",
+      })
+    }
+  }
 
   const validateTriangle = (a: number, b: number, c: number): boolean => {
     return a > 0 && b > 0 && c > 0 && a + b > c && a + c > b && b + c > a
@@ -80,18 +87,28 @@ export default function TriangleCalculator() {
     return Math.sqrt(s * (s - a) * (s - b) * (s - c))
   }
 
-  const handleCalculate = () => {
+  const handleCalculate = async () => {
     const a = Number.parseFloat(side1)
     const b = Number.parseFloat(side2)
     const c = Number.parseFloat(hypotenuse)
 
     if (isNaN(a) || isNaN(b) || isNaN(c)) {
       setError("يرجى إدخال قيم صحيحة لجميع الأضلاع")
+      await dbManager.saveLog({
+        log_type: "error",
+        message: "خطأ: قيم غير صحيحة للأضلاع",
+        timestamp: new Date(),
+      })
       return
     }
 
     if (!validateTriangle(a, b, c)) {
       setError("القيم المدخلة لا تشكل مثلثاً صحيحاً")
+      await dbManager.saveLog({
+        log_type: "error",
+        message: "خطأ: القيم المدخلة لا تشكل مثلثاً صحيحاً",
+        timestamp: new Date(),
+      })
       return
     }
 
@@ -102,34 +119,68 @@ export default function TriangleCalculator() {
     setCurrentAreaM2(areaM2)
     setCurrentAreaLabnah(areaLabnah)
 
-    const logEntry = `حساب جديد: الأضلاع (${a}, ${b}, ${c}) - المساحة: ${areaM2.toFixed(4)} متر مربع = ${areaLabnah.toFixed(6)} لبنة\n`
-    setCalculationLog((prev) => logEntry + prev)
+    try {
+      // Save calculation to database
+      await dbManager.saveCalculation({
+        timestamp: new Date(),
+        side1: a,
+        side2: b,
+        hypotenuse: c,
+        area_m2: areaM2,
+        area_labnah: areaLabnah,
+      })
 
-    const newCalculation: CalculationResult = {
-      id: Date.now().toString(),
-      timestamp: new Date(),
-      side1: a,
-      side2: b,
-      hypotenuse: c,
-      areaM2,
-      areaLabnah,
-    }
-
-    setHistory((prev) => [newCalculation, ...prev])
-  }
-
-  const handleAddToTotal = () => {
-    if (currentAreaM2 > 0) {
-      setTotalAreaM2((prev) => prev + currentAreaM2)
-      setTotalAreaLabnah((prev) => prev + currentAreaLabnah)
-
-      const logEntry = `تم إضافة ${currentAreaM2.toFixed(4)} متر مربع للإجمالي\n`
-      setCalculationLog((prev) => logEntry + prev)
+      // Reload data from database
+      await loadDataFromDatabase()
 
       toast({
-        title: "تم الإضافة بنجاح",
-        description: "تم إضافة المساحة للإجمالي",
+        title: "تم الحساب بنجاح",
+        description: "تم حفظ النتيجة في قاعدة البيانات",
       })
+    } catch (error) {
+      console.error("Failed to save calculation:", error)
+      toast({
+        title: "خطأ في الحفظ",
+        description: "فشل في حفظ النتيجة في قاعدة البيانات",
+        variant: "destructive",
+      })
+    }
+  }
+
+  const handleAddToTotal = async () => {
+    if (currentAreaM2 > 0) {
+      const newTotalM2 = totalAreaM2 + currentAreaM2
+      const newTotalLabnah = totalAreaLabnah + currentAreaLabnah
+
+      setTotalAreaM2(newTotalM2)
+      setTotalAreaLabnah(newTotalLabnah)
+
+      try {
+        // Update totals in database
+        await dbManager.updateTotals(newTotalM2, newTotalLabnah)
+
+        // Log the addition
+        await dbManager.saveLog({
+          log_type: "add_to_total",
+          message: `تم إضافة ${currentAreaM2.toFixed(4)} متر مربع للإجمالي`,
+          timestamp: new Date(),
+        })
+
+        // Reload logs
+        await loadDataFromDatabase()
+
+        toast({
+          title: "تم الإضافة بنجاح",
+          description: "تم إضافة المساحة للإجمالي وحفظها في قاعدة البيانات",
+        })
+      } catch (error) {
+        console.error("Failed to update totals:", error)
+        toast({
+          title: "خطأ في التحديث",
+          description: "فشل في تحديث الإجمالي في قاعدة البيانات",
+          variant: "destructive",
+        })
+      }
     }
   }
 
@@ -149,17 +200,58 @@ export default function TriangleCalculator() {
     }
   }
 
-  const clearHistory = () => {
-    setHistory([])
-    setTotalAreaM2(0)
-    setTotalAreaLabnah(0)
-    setCalculationLog("")
-    localStorage.removeItem("triangleHistory")
-    localStorage.removeItem("triangleTotal")
-    toast({
-      title: "تم مسح السجل",
-      description: "تم مسح جميع البيانات المحفوظة",
-    })
+  const clearHistory = async () => {
+    try {
+      await dbManager.clearSession()
+
+      setHistory([])
+      setTotalAreaM2(0)
+      setTotalAreaLabnah(0)
+      setCalculationLog("")
+      setCurrentAreaM2(0)
+      setCurrentAreaLabnah(0)
+
+      await loadDataFromDatabase()
+
+      toast({
+        title: "تم مسح السجل",
+        description: "تم مسح جميع البيانات المحفوظة من قاعدة البيانات",
+      })
+    } catch (error) {
+      console.error("Failed to clear history:", error)
+      toast({
+        title: "خطأ في المسح",
+        description: "فشل في مسح البيانات من قاعدة البيانات",
+        variant: "destructive",
+      })
+    }
+  }
+
+  const exportData = async () => {
+    try {
+      const data = await dbManager.exportData()
+      const blob = new Blob([data], { type: "application/json" })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement("a")
+      a.href = url
+      a.download = `triangle-calculator-data-${new Date().toISOString().split("T")[0]}.json`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+
+      toast({
+        title: "تم التصدير بنجاح",
+        description: "تم تصدير البيانات إلى ملف JSON",
+      })
+    } catch (error) {
+      console.error("Failed to export data:", error)
+      toast({
+        title: "خطأ في التصدير",
+        description: "فشل في تصدير البيانات",
+        variant: "destructive",
+      })
+    }
   }
 
   return (
@@ -168,7 +260,8 @@ export default function TriangleCalculator() {
         {/* Header */}
         <div className="text-center mb-6">
           <h1 className="text-3xl font-bold text-gray-800 mb-2">حساب مساحة المثلثات (لبنة)</h1>
-          <p className="text-gray-600">حاسبة دقيقة لمساحة المثلثات بالوحدات اليمنية</p>
+          <p className="text-gray-600">حاسبة دقيقة لمساحة المثلثات بالوحدات اليمنية مع قاعدة بيانات SQLite</p>
+          <div className="text-sm text-gray-500 mt-2">معرف الجلسة: {dbManager.getSessionId()}</div>
         </div>
 
         {/* Tabs */}
@@ -190,17 +283,57 @@ export default function TriangleCalculator() {
 
           {/* Home Tab */}
           <TabsContent value="home" className="space-y-6">
-            {/* Calculation Log */}
+            {/* Statistics Card */}
             <Card>
               <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Database className="w-5 h-5" />
+                  إحصائيات قاعدة البيانات
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                  <div className="text-center">
+                    <div className="font-semibold text-lg">{statistics.totalCalculations}</div>
+                    <div className="text-gray-600">إجمالي العمليات</div>
+                  </div>
+                  <div className="text-center">
+                    <div className="font-semibold text-lg">{statistics.totalSessions}</div>
+                    <div className="text-gray-600">عدد الجلسات</div>
+                  </div>
+                  <div className="text-center">
+                    <div className="font-semibold text-lg">{statistics.averageAreaM2.toFixed(2)}</div>
+                    <div className="text-gray-600">متوسط المساحة (م²)</div>
+                  </div>
+                  <div className="text-center">
+                    <div className="font-semibold text-lg">{statistics.averageAreaLabnah.toFixed(4)}</div>
+                    <div className="text-gray-600">متوسط المساحة (لبنة)</div>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Calculation Log */}
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between">
                 <CardTitle>سجل العمليات الحسابية</CardTitle>
+                <div className="flex gap-2">
+                  <Button onClick={exportData} variant="outline" size="sm">
+                    <Download className="w-4 h-4" />
+                    تصدير البيانات
+                  </Button>
+                  <Button onClick={clearHistory} variant="destructive" size="sm">
+                    <Trash2 className="w-4 h-4" />
+                    مسح السجل
+                  </Button>
+                </div>
               </CardHeader>
               <CardContent>
                 <Textarea
                   value={calculationLog}
                   readOnly
                   className="min-h-[120px] font-mono text-sm"
-                  placeholder="سيظهر هنا سجل العمليات الحسابية..."
+                  placeholder="سيظهر هنا سجل العمليات الحسابية من قاعدة البيانات..."
                 />
               </CardContent>
             </Card>
@@ -340,27 +473,31 @@ export default function TriangleCalculator() {
           <TabsContent value="history" className="space-y-6">
             <Card>
               <CardHeader className="flex flex-row items-center justify-between">
-                <CardTitle>سجل العمليات السابقة</CardTitle>
-                <Button onClick={clearHistory} variant="destructive" size="sm">
-                  مسح السجل
+                <CardTitle>سجل العمليات السابقة من قاعدة البيانات</CardTitle>
+                <Button onClick={loadDataFromDatabase} variant="outline" size="sm">
+                  <Database className="w-4 h-4" />
+                  تحديث من قاعدة البيانات
                 </Button>
               </CardHeader>
               <CardContent>
                 {history.length === 0 ? (
-                  <p className="text-center text-gray-500 py-8">لا توجد عمليات محفوظة</p>
+                  <p className="text-center text-gray-500 py-8">لا توجد عمليات محفوظة في قاعدة البيانات</p>
                 ) : (
                   <div className="space-y-4">
                     {history.map((calc) => (
                       <div key={calc.id} className="border rounded-lg p-4 bg-gray-50">
                         <div className="flex justify-between items-start mb-2">
-                          <div className="text-sm text-gray-600">{calc.timestamp.toLocaleString("ar-YE")}</div>
+                          <div className="text-sm text-gray-600">
+                            {calc.timestamp.toLocaleString("ar-YE")}
+                            <span className="ml-2 text-xs bg-blue-100 px-2 py-1 rounded">ID: {calc.id}</span>
+                          </div>
                         </div>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
                           <div>
                             <strong>الأضلاع:</strong> {calc.side1}, {calc.side2}, {calc.hypotenuse}
                           </div>
                           <div>
-                            <strong>المساحة:</strong> {calc.areaM2.toFixed(4)} م² = {calc.areaLabnah.toFixed(6)} لبنة
+                            <strong>المساحة:</strong> {calc.area_m2.toFixed(4)} م² = {calc.area_labnah.toFixed(6)} لبنة
                           </div>
                         </div>
                       </div>
@@ -382,17 +519,30 @@ export default function TriangleCalculator() {
                   <h3 className="font-semibold mb-2">وصف التطبيق</h3>
                   <p className="text-gray-700">
                     تطبيق حساب مساحة المثلثات (لبنة) هو أداة متخصصة لحساب مساحة المثلثات باستخدام قانون هيرون، مع
-                    إمكانية التحويل إلى وحدة اللبنة اليمنية التقليدية.
+                    إمكانية التحويل إلى وحدة اللبنة اليمنية التقليدية. يستخدم التطبيق قاعدة بيانات SQLite لحفظ جميع
+                    العمليات والنتائج.
                   </p>
+                </div>
+
+                <div>
+                  <h3 className="font-semibold mb-2">ميزات قاعدة البيانات</h3>
+                  <ul className="list-disc list-inside text-gray-700 space-y-1">
+                    <li>حفظ جميع العمليات الحسابية في قاعدة بيانات SQLite</li>
+                    <li>تتبع الجلسات المختلفة للمستخدمين</li>
+                    <li>إحصائيات شاملة للاستخدام</li>
+                    <li>إمكانية تصدير البيانات بصيغة JSON</li>
+                    <li>سجل مفصل لجميع العمليات والأخطاء</li>
+                  </ul>
                 </div>
 
                 <div>
                   <h3 className="font-semibold mb-2">كيفية الاستخدام</h3>
                   <ul className="list-disc list-inside text-gray-700 space-y-1">
                     <li>أدخل أطوال الأضلاع الثلاثة للمثلث</li>
-                    <li>اضغط على زر "حساب" لحساب المساحة</li>
+                    <li>اضغط على زر "حساب" لحساب المساحة وحفظها في قاعدة البيانات</li>
                     <li>استخدم زر "أضف للإجمالي" لجمع المساحات</li>
                     <li>انسخ النتائج باستخدام أزرار النسخ</li>
+                    <li>راجع السجل والإحصائيات في التبويبات المختلفة</li>
                   </ul>
                 </div>
 
@@ -408,6 +558,17 @@ export default function TriangleCalculator() {
                     <br />
                     حيث s = (a+b+c)/2
                   </p>
+                </div>
+
+                <div>
+                  <h3 className="font-semibold mb-2">تقنيات التطبيق</h3>
+                  <ul className="list-disc list-inside text-gray-700 space-y-1">
+                    <li>Next.js 15 مع React 19</li>
+                    <li>TypeScript للأمان في الكتابة</li>
+                    <li>Tailwind CSS للتصميم</li>
+                    <li>SQLite لقاعدة البيانات (محاكاة باستخدام localStorage)</li>
+                    <li>shadcn/ui للمكونات</li>
+                  </ul>
                 </div>
               </CardContent>
             </Card>
