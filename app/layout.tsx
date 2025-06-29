@@ -5,7 +5,7 @@ import { Toaster } from "@/components/ui/toaster"
 
 export const metadata: Metadata = {
   title: "حساب مساحة المثلثات (لبنة) - Triangle Area Calculator",
-  description: "حاسبة دقيقة لمساحة المثلثات بالوحدات اليمنية مع قاعدة بيانات SQLite",
+  description: "حاسبة دقيقة لمساحة المثلثات بالوحدات اليمنية مع حفظ البيانات محلياً",
   generator: "v0.dev",
 }
 

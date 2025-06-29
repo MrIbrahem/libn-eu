@@ -20,7 +20,7 @@ import {
   Trash2,
 } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
-import { dbManager, type CalculationRecord } from "@/lib/database"
+import { storageManager, type CalculationRecord } from "@/lib/storage"
 
 export default function TriangleCalculator() {
   const [activeTab, setActiveTab] = useState("home")
@@ -45,34 +45,24 @@ export default function TriangleCalculator() {
 
   // Load data from database on component mount
   useEffect(() => {
-    loadDataFromDatabase()
+    loadDataFromStorage()
   }, [])
 
-  const loadDataFromDatabase = async () => {
+  const loadDataFromStorage = () => {
     try {
-      // Load calculations history
-      const calculations = await dbManager.getCalculations()
-      setHistory(calculations)
+      const data = storageManager.getData()
+      setHistory(data.calculations)
+      setTotalAreaM2(data.totalAreaM2)
+      setTotalAreaLabnah(data.totalAreaLabnah)
+      setCalculationLog(data.logs.join("\n"))
 
-      // Load totals
-      const totals = await dbManager.getTotals()
-      if (totals) {
-        setTotalAreaM2(totals.total_area_m2)
-        setTotalAreaLabnah(totals.total_area_labnah)
-      }
-
-      // Load session logs
-      const logs = await dbManager.getSessionLogs()
-      setCalculationLog(logs)
-
-      // Load statistics
-      const stats = await dbManager.getStatistics()
+      const stats = storageManager.getStatistics()
       setStatistics(stats)
     } catch (error) {
-      console.error("Failed to load data from database:", error)
+      console.error("خطأ في تحميل البيانات:", error)
       toast({
-        title: "خطأ في قاعدة البيانات",
-        description: "فشل في تحميل البيانات من قاعدة البيانات",
+        title: "خطأ في التحميل",
+        description: "فشل في تحميل البيانات المحفوظة",
         variant: "destructive",
       })
     }
@@ -87,28 +77,20 @@ export default function TriangleCalculator() {
     return Math.sqrt(s * (s - a) * (s - b) * (s - c))
   }
 
-  const handleCalculate = async () => {
+  const handleCalculate = () => {
     const a = Number.parseFloat(side1)
     const b = Number.parseFloat(side2)
     const c = Number.parseFloat(hypotenuse)
 
     if (isNaN(a) || isNaN(b) || isNaN(c)) {
       setError("يرجى إدخال قيم صحيحة لجميع الأضلاع")
-      await dbManager.saveLog({
-        log_type: "error",
-        message: "خطأ: قيم غير صحيحة للأضلاع",
-        timestamp: new Date(),
-      })
+      storageManager.addLog("خطأ: قيم غير صحيحة للأضلاع")
       return
     }
 
     if (!validateTriangle(a, b, c)) {
       setError("القيم المدخلة لا تشكل مثلثاً صحيحاً")
-      await dbManager.saveLog({
-        log_type: "error",
-        message: "خطأ: القيم المدخلة لا تشكل مثلثاً صحيحاً",
-        timestamp: new Date(),
-      })
+      storageManager.addLog("خطأ: القيم المدخلة لا تشكل مثلثاً صحيحاً")
       return
     }
 
@@ -119,35 +101,26 @@ export default function TriangleCalculator() {
     setCurrentAreaM2(areaM2)
     setCurrentAreaLabnah(areaLabnah)
 
-    try {
-      // Save calculation to database
-      await dbManager.saveCalculation({
-        timestamp: new Date(),
-        side1: a,
-        side2: b,
-        hypotenuse: c,
-        area_m2: areaM2,
-        area_labnah: areaLabnah,
-      })
+    // حفظ العملية
+    storageManager.addCalculation({
+      timestamp: new Date(),
+      side1: a,
+      side2: b,
+      hypotenuse: c,
+      area_m2: areaM2,
+      area_labnah: areaLabnah,
+    })
 
-      // Reload data from database
-      await loadDataFromDatabase()
+    // تحديث البيانات
+    loadDataFromStorage()
 
-      toast({
-        title: "تم الحساب بنجاح",
-        description: "تم حفظ النتيجة في قاعدة البيانات",
-      })
-    } catch (error) {
-      console.error("Failed to save calculation:", error)
-      toast({
-        title: "خطأ في الحفظ",
-        description: "فشل في حفظ النتيجة في قاعدة البيانات",
-        variant: "destructive",
-      })
-    }
+    toast({
+      title: "تم الحساب بنجاح",
+      description: "تم حفظ النتيجة محلياً",
+    })
   }
 
-  const handleAddToTotal = async () => {
+  const handleAddToTotal = () => {
     if (currentAreaM2 > 0) {
       const newTotalM2 = totalAreaM2 + currentAreaM2
       const newTotalLabnah = totalAreaLabnah + currentAreaLabnah
@@ -155,32 +128,13 @@ export default function TriangleCalculator() {
       setTotalAreaM2(newTotalM2)
       setTotalAreaLabnah(newTotalLabnah)
 
-      try {
-        // Update totals in database
-        await dbManager.updateTotals(newTotalM2, newTotalLabnah)
+      storageManager.updateTotals(newTotalM2, newTotalLabnah)
+      loadDataFromStorage()
 
-        // Log the addition
-        await dbManager.saveLog({
-          log_type: "add_to_total",
-          message: `تم إضافة ${currentAreaM2.toFixed(4)} متر مربع للإجمالي`,
-          timestamp: new Date(),
-        })
-
-        // Reload logs
-        await loadDataFromDatabase()
-
-        toast({
-          title: "تم الإضافة بنجاح",
-          description: "تم إضافة المساحة للإجمالي وحفظها في قاعدة البيانات",
-        })
-      } catch (error) {
-        console.error("Failed to update totals:", error)
-        toast({
-          title: "خطأ في التحديث",
-          description: "فشل في تحديث الإجمالي في قاعدة البيانات",
-          variant: "destructive",
-        })
-      }
+      toast({
+        title: "تم الإضافة بنجاح",
+        description: "تم إضافة المساحة للإجمالي",
+      })
     }
   }
 
@@ -200,36 +154,27 @@ export default function TriangleCalculator() {
     }
   }
 
-  const clearHistory = async () => {
-    try {
-      await dbManager.clearSession()
+  const clearHistory = () => {
+    storageManager.clearAll()
 
-      setHistory([])
-      setTotalAreaM2(0)
-      setTotalAreaLabnah(0)
-      setCalculationLog("")
-      setCurrentAreaM2(0)
-      setCurrentAreaLabnah(0)
+    setHistory([])
+    setTotalAreaM2(0)
+    setTotalAreaLabnah(0)
+    setCalculationLog("")
+    setCurrentAreaM2(0)
+    setCurrentAreaLabnah(0)
 
-      await loadDataFromDatabase()
+    loadDataFromStorage()
 
-      toast({
-        title: "تم مسح السجل",
-        description: "تم مسح جميع البيانات المحفوظة من قاعدة البيانات",
-      })
-    } catch (error) {
-      console.error("Failed to clear history:", error)
-      toast({
-        title: "خطأ في المسح",
-        description: "فشل في مسح البيانات من قاعدة البيانات",
-        variant: "destructive",
-      })
-    }
+    toast({
+      title: "تم مسح السجل",
+      description: "تم مسح جميع البيانات المحفوظة",
+    })
   }
 
-  const exportData = async () => {
+  const exportData = () => {
     try {
-      const data = await dbManager.exportData()
+      const data = storageManager.exportData()
       const blob = new Blob([data], { type: "application/json" })
       const url = URL.createObjectURL(blob)
       const a = document.createElement("a")
@@ -245,7 +190,7 @@ export default function TriangleCalculator() {
         description: "تم تصدير البيانات إلى ملف JSON",
       })
     } catch (error) {
-      console.error("Failed to export data:", error)
+      console.error("خطأ في التصدير:", error)
       toast({
         title: "خطأ في التصدير",
         description: "فشل في تصدير البيانات",
@@ -261,7 +206,6 @@ export default function TriangleCalculator() {
         <div className="text-center mb-6">
           <h1 className="text-3xl font-bold text-gray-800 mb-2">حساب مساحة المثلثات (لبنة)</h1>
           <p className="text-gray-600">حاسبة دقيقة لمساحة المثلثات بالوحدات اليمنية مع قاعدة بيانات SQLite</p>
-          <div className="text-sm text-gray-500 mt-2">معرف الجلسة: {dbManager.getSessionId()}</div>
         </div>
 
         {/* Tabs */}
@@ -288,7 +232,7 @@ export default function TriangleCalculator() {
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
                   <Database className="w-5 h-5" />
-                  إحصائيات قاعدة البيانات
+                  إحصائيات البيانات المحفوظة
                 </CardTitle>
               </CardHeader>
               <CardContent>
@@ -474,9 +418,9 @@ export default function TriangleCalculator() {
             <Card>
               <CardHeader className="flex flex-row items-center justify-between">
                 <CardTitle>سجل العمليات السابقة من قاعدة البيانات</CardTitle>
-                <Button onClick={loadDataFromDatabase} variant="outline" size="sm">
+                <Button onClick={loadDataFromStorage} variant="outline" size="sm">
                   <Database className="w-4 h-4" />
-                  تحديث من قاعدة البيانات
+                  تحديث البيانات
                 </Button>
               </CardHeader>
               <CardContent>
